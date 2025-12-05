@@ -1,15 +1,22 @@
-from langchain_postgres import PGVector
-from embedding_model import embeddings
-from dotenv import load_dotenv
 import os
+
+from pinecone import Pinecone, ServerlessSpec
+from dotenv import load_dotenv
 
 load_dotenv()
 
-vector_store = PGVector(
-    embeddings=embeddings,
-    collection_name="my_docs",
-    connection=os.getenv("DATABASE_URL"),
-)
+index_name = "isi-data-test2"
 
-test_embedding = embeddings.embed_query("test")
-print(f"Embedding dimension: {len(test_embedding)}")
+# initialize Pinecone client
+pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+
+if index_name not in pc.list_indexes().names():
+    pc.create_index(
+        name=index_name,
+        dimension=3072,  # <-- change to your embedding model
+        metric="dotproduct",
+        spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+    )
+
+
+index = pc.Index(index_name)
