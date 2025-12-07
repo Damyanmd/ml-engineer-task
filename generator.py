@@ -1,6 +1,5 @@
-from langchain.agents import create_react_agent, AgentExecutor, create_tool_calling_agent
-from langchain.prompts import ChatPromptTemplate, PromptTemplate
-from langchain.chains import RetrievalQA
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain.prompts import ChatPromptTemplate
 
 from model import model
 from system_prompt import system_prompt
@@ -23,4 +22,6 @@ agent_executor = AgentExecutor(
 
 
 # Use it
-response = agent_executor.invoke({"input": "What information do you have for paris market?"})
+response = agent_executor.invoke({"input": "how to calculate taxes?"})
+final_answer = response["output"]
+print(final_answer)

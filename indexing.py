@@ -34,11 +34,6 @@ def get_uuid_from_filename(filename):
     return filename.stem
 
 
-# Initialize encoders
-print("Loading embedding models...")
-dense_model = embeddings
-sparse_model = BM25Encoder().default()
-
 # Load metadata
 metadata_path = Path("data/metadata.jsonl")
 print(f"Loading metadata from {metadata_path}...")
@@ -115,32 +110,46 @@ text_splitter = RecursiveCharacterTextSplitter(
 all_splits = text_splitter.split_documents(all_documents)
 print(f"Created {len(all_splits)} text chunks\n")
 
+# Filter out empty or very short texts to prevent sparse vector errors
+print("Filtering valid chunks...")
+valid_splits = [
+    doc for doc in all_splits 
+    if doc.page_content.strip() and len(doc.page_content.strip()) > 10
+]
+print(f"Valid chunks after filtering: {len(valid_splits)}")
+
+if len(valid_splits) == 0:
+    raise ValueError("No valid text chunks found after filtering!")
+
 # Prepare corpus for BM25
-corpus_texts = [doc.page_content for doc in all_splits]
+corpus_texts = [doc.page_content for doc in valid_splits]
 
-# Fit and save BM25 encoder
-print("Fitting BM25 encoder...")
-sparse_model.fit(corpus_texts)
-sparse_model.dump("bm25_encoder.json")
+# Initialize and fit BM25 encoder
+print("Initializing and fitting BM25 encoder...")
+bm25_encoder = BM25Encoder()
+bm25_encoder.fit(corpus_texts)
+bm25_encoder.dump("bm25_encoder.json")
+print("✓ BM25 encoder fitted and saved\n")
 
-# Load BM25 encoder
-bm25_encoder = BM25Encoder().load("bm25_encoder.json")
-
-# Create retriever
+# Create retriever with the fitted encoder
 retriever = PineconeHybridSearchRetriever(
-    embeddings=embeddings, sparse_encoder=bm25_encoder, index=index
+    embeddings=embeddings, 
+    sparse_encoder=bm25_encoder, 
+    index=index
 )
 
 # Upload documents to Pinecone with metadata
-print(f"\nUploading {len(all_splits)} chunks to Pinecone with metadata...")
+print(f"Uploading {len(valid_splits)} chunks to Pinecone with metadata...")
 try:
     retriever.add_texts(
-        texts=[doc.page_content for doc in all_splits],
-        metadatas=[doc.metadata for doc in all_splits],
+        texts=[doc.page_content for doc in valid_splits],
+        metadatas=[doc.metadata for doc in valid_splits],
     )
     print("✓ Upload complete!")
 except Exception as e:
     print(f"✗ Upload failed: {str(e)}")
+    import traceback
+    traceback.print_exc()
     raise
 
 # Verify upload
