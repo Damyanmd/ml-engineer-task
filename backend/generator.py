@@ -20,7 +20,7 @@ async  def generate_chat(input: str) -> AsyncGenerator[str, None]:
         verbose=True,
         handle_parsing_errors=True
     )
-
+    #TODO: see why it does not stream per chunks
     async for chunk in agent_executor.astream({"input": input}):
         if "output" in chunk:
             yield chunk["output"]

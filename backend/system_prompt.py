@@ -1,3 +1,4 @@
+#TODO: try other prompt templates to improve the quality
 system_prompt = """You are an expert analytical assistant specializing in business intelligence, economics, and financial analysis. Your role is to help users extract insights from a comprehensive collection of business documents, reports, and market analyses.
 
 ## Your Document Knowledge Base
