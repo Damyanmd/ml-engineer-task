@@ -1,35 +1,24 @@
 from fastapi import HTTPException, APIRouter
 
+from backend.generator import generate_chat
+from backend.schemas import Question
+
 router = APIRouter()
 
-# Initialize RAG system
-rag_system = None
 
-# @router.post("/ask", response_model=Answer)
-# async def ask_question(question: Question):
-#     """Process question and return answer"""
-#     try:
-#         if rag_system is None:
-#             raise HTTPException(status_code=500, detail="RAG system not initialized")
+@router.post("/ask")
+async def ask_question(question: Question):
+    """Process question and return answer"""
+    try:
+        answer = ""
+        async for chunk in generate_chat(question.question):
+            answer += chunk
 
-#         result = rag_system.query(question.question)
+        return {
+            "answer": answer,
+            "sources": []  # Add your actual sources here if available
+        }
 
-#         return Answer(
-#             answer=result['answer'],
-#             sources=result['sources']
-#         )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/")
-async def root():
-    """Root endpoint"""
-    return {
-        "message": "RAG Q&A API is running",
-        "endpoints": {
-            "/ask": "POST - Ask a question",
-            "/docs": "GET - API documentation",
-        },
-    }
