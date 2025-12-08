@@ -1,27 +1,27 @@
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain.prompts import ChatPromptTemplate
+from typing import AsyncGenerator
 
-from model import model
-from system_prompt import system_prompt
-from retreiver import retrieve_context
+from backend.model import model
+from backend.system_prompt import system_prompt
+from backend.retreiver import retrieve_context
 
+async  def generate_chat(input: str) -> AsyncGenerator[str, None]:
+    prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("human", "{input}"),
+            ("placeholder", "{agent_scratchpad}"),
+        ])
+        
+    agent = create_tool_calling_agent(llm=model, tools=[retrieve_context], prompt=prompt)
+    agent_executor = AgentExecutor(
+        agent=agent,
+        tools=[retrieve_context],
+        verbose=True,
+        handle_parsing_errors=True
+    )
 
-prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("human", "{input}"),
-        ("placeholder", "{agent_scratchpad}"),
-    ])
-    
-agent = create_tool_calling_agent(llm=model, tools=retrieve_context, prompt=prompt)
-agent_executor = AgentExecutor(
-    agent=agent,
-    tools=[retrieve_context],
-    verbose=True,
-    handle_parsing_errors=True
-)
+    async for chunk in agent_executor.astream({"input": input}):
+        if "output" in chunk:
+            yield chunk["output"]
 
-
-# Use it
-response = agent_executor.invoke({"input": "how to calculate taxes?"})
-final_answer = response["output"]
-print(final_answer)
