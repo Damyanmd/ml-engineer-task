@@ -7,6 +7,7 @@ import os
 import json
 from pathlib import Path
 from langchain_community.retrievers import PineconeHybridSearchRetriever
+
 from connect_db import index
 from embedding_model import embeddings
 
