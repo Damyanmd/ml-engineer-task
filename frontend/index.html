@@ -47,6 +47,8 @@
         .message {
             margin-bottom: 16px;
             animation: fadeIn 0.3s;
+            display: block;
+            clear: both;
         }
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
@@ -61,7 +63,7 @@
             max-width: 80%;
             margin-left: auto;
             float: right;
-            clear: both;
+            word-wrap: break-word;
         }
         .answer {
             background: white;
@@ -71,7 +73,8 @@
             display: inline-block;
             max-width: 80%;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            clear: both;
+            white-space: pre-wrap;
+            word-wrap: break-word;
         }
         .input-container {
             padding: 20px;
@@ -121,10 +124,8 @@
             color: #666;
             font-style: italic;
         }
-        .clearfix::after {
-            content: "";
-            display: table;
-            clear: both;
+        .error {
+            color: #dc3545;
         }
     </style>
 </head>
@@ -136,7 +137,7 @@
         </div>
         
         <div class="chat-container" id="chatContainer">
-            <div class="message clearfix">
+            <div class="message">
                 <div class="answer">
                     👋 Hello! I'm your RAG assistant. Ask me anything!
                 </div>
@@ -149,9 +150,8 @@
                     type="text" 
                     id="questionInput" 
                     placeholder="Type your question here..."
-                    onkeypress="if(event.key==='Enter') askQuestion()"
                 >
-                <button onclick="askQuestion()" id="askBtn">Ask</button>
+                <button id="askBtn">Ask</button>
             </div>
         </div>
     </div>
@@ -161,21 +161,32 @@
         const questionInput = document.getElementById('questionInput');
         const askBtn = document.getElementById('askBtn');
 
+        questionInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !askBtn.disabled) {
+                askQuestion();
+            }
+        });
+
+        askBtn.addEventListener('click', askQuestion);
+
         async function askQuestion() {
             const question = questionInput.value.trim();
             if (!question) return;
 
+            // Clear input immediately
+            questionInput.value = '';
+            
             // Display user question
             addMessage(question, 'question');
-            questionInput.value = '';
+            
+            // Disable button
             askBtn.disabled = true;
 
             // Show loading
             const loadingId = addMessage('Thinking...', 'answer loading');
 
             try {
-                // LangChain backend endpoint
-                const response = await fetch('http://localhost:8000/ask', {
+                const response = await fetch('/ask', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -184,46 +195,74 @@
                 });
 
                 if (!response.ok) {
-                    throw new Error('Failed to get response');
+                    throw new Error(`Server returned ${response.status}`);
                 }
 
                 const data = await response.json();
+                console.log('Received data:', data);
                 
                 // Remove loading message
-                document.getElementById(loadingId).remove();
+                const loadingEl = document.getElementById(loadingId);
+                if (loadingEl) loadingEl.remove();
                 
-                // Display answer with sources
-                let answerText = data.answer;
+                // Extract answer - handle different response formats
+                let answerText = '';
+                if (typeof data === 'string') {
+                    // If response is a plain string
+                    answerText = data;
+                } else if (data.answer) {
+                    // If response has an 'answer' field
+                    answerText = data.answer;
+                } else if (data.response) {
+                    // If response has a 'response' field
+                    answerText = data.response;
+                } else {
+                    // Fallback: stringify the whole response
+                    answerText = JSON.stringify(data);
+                }
+
+                // Remove surrounding quotes if present
+                answerText = answerText.replace(/^["']|["']$/g, '');
+                
+                // Add sources if available
                 if (data.sources && data.sources.length > 0) {
                     answerText += '\n\n📚 Sources: ' + data.sources.join(', ');
                 }
+                
                 addMessage(answerText, 'answer');
                 
             } catch (error) {
+                console.error('Error:', error);
+                
                 // Remove loading message
-                document.getElementById(loadingId).remove();
+                const loadingEl = document.getElementById(loadingId);
+                if (loadingEl) loadingEl.remove();
                 
                 // Show error
-                addMessage('❌ Error: Could not connect to RAG backend. Make sure the server is running on http://localhost:8000', 'answer');
-                console.error('Error:', error);
+                addMessage('❌ Error: ' + error.message, 'answer error');
             }
 
             askBtn.disabled = false;
             questionInput.focus();
         }
 
-        function addMessage(text, type) {
+        function addMessage(text, className) {
             const messageDiv = document.createElement('div');
-            const id = 'msg-' + Date.now();
+            const id = 'msg-' + Date.now() + '-' + Math.random();
             messageDiv.id = id;
-            messageDiv.className = 'message clearfix';
-            messageDiv.innerHTML = `<div class="${type}">${text}</div>`;
+            messageDiv.className = 'message';
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = className;
+            contentDiv.textContent = text;
+            
+            messageDiv.appendChild(contentDiv);
             chatContainer.appendChild(messageDiv);
             chatContainer.scrollTop = chatContainer.scrollHeight;
+            
             return id;
         }
 
-        // Focus input on load
         questionInput.focus();
     </script>
 </body>
