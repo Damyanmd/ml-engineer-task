@@ -22,6 +22,7 @@ app.include_router(api_router)
 async def read_root():
     return FileResponse(path="frontend/index.html", media_type="text/html")  
 
+#TODO: if possible to write automation tests
 if __name__ == "__main__":
     uvicorn.run(
         app,
