@@ -18,7 +18,6 @@ def retrieve_context(query: str) -> str:
         embeddings=embeddings, sparse_encoder=bm25_encoder, index=index
     )
 
-    #TODO: increase the top_k results to 10
     result = retriever.invoke(query)
     contents = "\n\n---\n\n".join([doc.page_content for doc in result])
 
