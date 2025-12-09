@@ -21,7 +21,9 @@ async  def generate_chat(input: str) -> AsyncGenerator[str, None]:
         handle_parsing_errors=True
     )
     #TODO: see why it does not stream per chunks
-    async for chunk in agent_executor.astream({"input": input}):
-        if "output" in chunk:
-            yield chunk["output"]
+    async for event in agent_executor.astream_events({"input": input}, version="v2"):
+        if event["event"] == "on_chat_model_stream":
+            chunk = event["data"]["chunk"]
+            if hasattr(chunk, "content") and chunk.content:
+                yield chunk.content
 
