@@ -1,3 +1,2 @@
 PINECONE_API_KEY=your-pinecone-api-key
-DOCUMENTS_PATH=-your-documents-path
 GOOGLE_API_KEY=your-api-key
