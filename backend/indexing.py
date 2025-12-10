@@ -1,161 +1,252 @@
+import logging
+import json
+import traceback
+from pathlib import Path
+from typing import List, Dict, Tuple
+
+import pymupdf
+from dotenv import load_dotenv
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from pinecone_text.sparse import BM25Encoder
-from dotenv import load_dotenv
-import pymupdf
-import os
-import json
-from pathlib import Path
 from langchain_community.retrievers import PineconeHybridSearchRetriever
+from pinecone_text.sparse import BM25Encoder
 
-from connect_db import index
-from embedding_model import embeddings
-
-load_dotenv()
+from backend.connect_db import get_index
+from backend.utils import get_embedding_model
 
 # Configuration
-documents_path = os.getenv("DOCUMENTS_PATH")
+load_dotenv()
+DOCUMENTS_PATH = Path("data")
+METADATA_PATH = Path("data/metadata.jsonl")
+BM25_ENCODER_PATH = Path("backend/bm25_encoder.json")
 BATCH_SIZE = 100
+CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 200
+MIN_CHUNK_LENGTH = 10
+
+# # Setup logging
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format='%(asctime)s - %(levelname)s - %(message)s',
+#     handlers=[
+#         logging.FileHandler('pdf_embedding.log'),
+#         logging.StreamHandler()
+#     ]
+# )
+logger = logging.getLogger(__name__)
 
 
-# Load metadata from JSONL file
-def load_metadata(metadata_path):
-    """Load metadata from JSONL file and create a lookup dictionary by UUID"""
+def load_metadata(metadata_path: Path) -> Dict[str, Dict]:
+    """Load metadata from JSONL file and create a lookup dictionary by UUID."""
+    logger.info(f"Loading metadata from {metadata_path}...")
     metadata_lookup = {}
-    with open(metadata_path, "r", encoding="utf-8") as f:
-        for line in f:
-            doc_meta = json.loads(line)
-            metadata_lookup[doc_meta["uuid"]] = doc_meta
-    return metadata_lookup
+    
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            for line in f:
+                doc_meta = json.loads(line)
+                metadata_lookup[doc_meta["uuid"]] = doc_meta
+        
+        logger.info(f"Loaded metadata for {len(metadata_lookup)} documents")
+        return metadata_lookup
+    except FileNotFoundError:
+        logger.error(f"Metadata file not found: {metadata_path}")
+        raise
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in metadata file: {e}")
+        raise
 
 
-# Extract UUID from filename
-def get_uuid_from_filename(filename):
-    """Extract UUID from PDF filename. Adjust this based on your file naming."""
-    return filename.stem
-
-
-# Load metadata
-metadata_path = Path("data/metadata.jsonl")
-print(f"Loading metadata from {metadata_path}...")
-metadata_lookup = load_metadata(metadata_path)
-print(f"Loaded metadata for {len(metadata_lookup)} documents\n")
-
-
-# Load PDFs and check which ones need to be embedded
-folder_path = Path(documents_path)
-pdf_files = list(folder_path.glob("*.pdf"))
-
-
-all_documents = []
-errors = []
-
-for pdf_file in pdf_files:
+def load_pdf_with_metadata(
+    pdf_file: Path,
+    metadata_lookup: Dict[str, Dict]
+) -> Tuple[List, str]:
+    """
+    Load a single PDF and enrich with metadata.
+    
+    Returns:
+        Tuple of (documents list, error message or None)
+    """
     try:
         if pdf_file.stat().st_size == 0:
-            errors.append(f"{pdf_file.name}: Empty file")
-            continue
+            return [], f"Empty file"
 
-        # Get UUID from filename
-        file_uuid = get_uuid_from_filename(pdf_file)
-
-        # Load PDF
+        file_uuid = pdf_file.stem
         loader = PyMuPDFLoader(str(pdf_file))
         documents = loader.load()
 
-        # Enrich each document with metadata from JSONL
+        # Enrich with metadata
         if file_uuid in metadata_lookup:
             doc_metadata = metadata_lookup[file_uuid]
             for doc in documents:
-                doc.metadata.update(
-                    {
-                        "uuid": doc_metadata["uuid"],
-                        "title": doc_metadata["title"],
-                        "industries": doc_metadata["industries"],
-                        "date": doc_metadata["date"],
-                        "country_codes": doc_metadata["country_codes"],
-                    }
-                )
+                doc.metadata.update({
+                    "uuid": doc_metadata["uuid"],
+                    "title": doc_metadata["title"],
+                    "industries": doc_metadata["industries"],
+                    "date": doc_metadata["date"],
+                    "country_codes": doc_metadata["country_codes"],
+                })
         else:
-            print(f"⚠ No metadata found for {pdf_file.name}")
+            logger.warning(f"No metadata found for {pdf_file.name}")
 
-        all_documents.extend(documents)
-        print(f"✓ {pdf_file.name}: {len(documents)} pages - NEW (will be embedded)")
+        logger.info(f"✓ {pdf_file.name}: {len(documents)} pages loaded")
+        return documents, None
 
-    except (pymupdf.EmptyFileError, pymupdf.FileDataError) as e:
-        errors.append(f"{pdf_file.name}: Corrupted PDF")
+    except (pymupdf.EmptyFileError, pymupdf.FileDataError):
+        return [], "Corrupted PDF"
     except Exception as e:
-        errors.append(f"{pdf_file.name}: {type(e).__name__} - {str(e)}")
+        return [], f"{type(e).__name__} - {str(e)}"
 
-print(f"\n{'=' * 60}")
-print(f"Summary:")
-print(f"  Total PDF files found: {len(pdf_files)}")
-print(f"  New files to embed: {len(pdf_files) - len(errors)}")
-print(f"  Errors: {len(errors)}")
-print(f"  Total pages loaded: {len(all_documents)}")
-print(f"{'=' * 60}\n")
 
-if errors:
-    print(f"Errors encountered:")
-    for error in errors:
-        print(f"  - {error}")
-    print()
+def load_all_pdfs(
+    folder_path: Path
+) -> Tuple[List, List[str]]:
+    """
+    Load all PDFs from folder with metadata.
+    
+    Returns:
+        Tuple of (all documents, list of errors)
+    """
+    logger.info(f"Loading PDFs from {folder_path}...")
+    pdf_files = list(folder_path.glob("*.pdf"))
+    logger.info(f"Found {len(pdf_files)} PDF files")
 
-# Split documents
-print("Splitting documents into chunks...")
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1000,
-    chunk_overlap=200,
-    add_start_index=True,
-)
-all_splits = text_splitter.split_documents(all_documents)
-print(f"Created {len(all_splits)} text chunks\n")
+    all_documents = []
+    errors = []
 
-# Filter out empty or very short texts to prevent sparse vector errors
-print("Filtering valid chunks...")
-valid_splits = [
-    doc for doc in all_splits 
-    if doc.page_content.strip() and len(doc.page_content.strip()) > 10
-]
-print(f"Valid chunks after filtering: {len(valid_splits)}")
+    metadata_lookup = load_metadata(METADATA_PATH)
 
-if len(valid_splits) == 0:
-    raise ValueError("No valid text chunks found after filtering!")
+    for pdf_file in pdf_files:
+        documents, error = load_pdf_with_metadata(pdf_file, metadata_lookup)
+        
+        if error:
+            error_msg = f"{pdf_file.name}: {error}"
+            errors.append(error_msg)
+            logger.error(error_msg)
+        else:
+            all_documents.extend(documents)
 
-# Prepare corpus for BM25
-corpus_texts = [doc.page_content for doc in valid_splits]
+    return all_documents, errors
 
-# Initialize and fit BM25 encoder
-print("Initializing and fitting BM25 encoder...")
-bm25_encoder = BM25Encoder()
-bm25_encoder.fit(corpus_texts)
-bm25_encoder.dump("bm25_encoder.json")
-print("✓ BM25 encoder fitted and saved\n")
 
-# Create retriever with the fitted encoder
-retriever = PineconeHybridSearchRetriever(
-    embeddings=embeddings, 
-    sparse_encoder=bm25_encoder, 
-    index=index
-)
-
-# Upload documents to Pinecone with metadata
-print(f"Uploading {len(valid_splits)} chunks to Pinecone with metadata...")
-try:
-    retriever.add_texts(
-        texts=[doc.page_content for doc in valid_splits],
-        metadatas=[doc.metadata for doc in valid_splits],
+def split_documents(documents: List, chunk_size: int, chunk_overlap: int) -> List:
+    """Split documents into chunks."""
+    logger.info("Splitting documents into chunks...")
+    
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        add_start_index=True,
     )
-    print("✓ Upload complete!")
-except Exception as e:
-    print(f"✗ Upload failed: {str(e)}")
-    import traceback
-    traceback.print_exc()
-    raise
+    
+    splits = text_splitter.split_documents(documents)
+    logger.info(f"Created {len(splits)} text chunks")
+    
+    return splits
 
-# Verify upload
-try:
-    stats = index.describe_index_stats()
-    print(f"\n✓ Index now contains {stats['total_vector_count']} vectors")
-except Exception as e:
-    print(f"⚠ Could not verify index stats: {str(e)}")
+
+def create_and_save_bm25_encoder(corpus_texts: List[str], save_path: str) -> BM25Encoder:
+    """Initialize, fit, and save BM25 encoder."""
+    logger.info("Initializing and fitting BM25 encoder...")
+    
+    bm25_encoder = BM25Encoder()
+    bm25_encoder.fit(corpus_texts)
+    bm25_encoder.dump(save_path)
+    
+    logger.info(f"✓ BM25 encoder fitted and saved to {save_path}")
+    return bm25_encoder
+
+
+def upload_to_pinecone(retriever: PineconeHybridSearchRetriever, documents: List) -> None:
+    """Upload documents to Pinecone with metadata."""
+    logger.info(f"Uploading {len(documents)} chunks to Pinecone...")
+    
+    try:
+        retriever.add_texts(
+            texts=[doc.page_content for doc in documents],
+            metadatas=[doc.metadata for doc in documents],
+        )
+        logger.info("✓ Upload complete!")
+    except Exception as e:
+        logger.error(f"✗ Upload failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise
+
+
+def verify_index_stats(index) -> None:
+    """Verify and log index statistics."""
+    try:
+        stats = index.describe_index_stats()
+        logger.info(f"✓ Index now contains {stats['total_vector_count']} vectors")
+    except Exception as e:
+        logger.warning(f"Could not verify index stats: {str(e)}")
+
+
+def print_summary(total_files: int, errors: List[str], total_pages: int) -> None:
+    """Print processing summary."""
+    separator = "=" * 60
+    print(f"\n{separator}")
+    print("Summary:")
+    print(f"  Total PDF files found: {total_files}")
+    print(f"  Successfully processed: {total_files - len(errors)}")
+    print(f"  Errors: {len(errors)}")
+    print(f"  Total pages loaded: {total_pages}")
+    print(f"{separator}\n")
+
+    if errors:
+        print("Errors encountered:")
+        for error in errors:
+            print(f"  - {error}")
+        print()
+
+
+def main():
+    """Main execution function."""
+    try:
+        index = get_index()
+        embedding_model = get_embedding_model()
+
+        # Load PDFs
+        all_documents, errors = load_all_pdfs(DOCUMENTS_PATH)
+        
+        # Print summary
+        pdf_files = list(DOCUMENTS_PATH.glob("*.pdf"))
+        print_summary(len(pdf_files), errors, len(all_documents))
+
+        if not all_documents:
+            logger.error("No documents were loaded successfully. Exiting.")
+            return
+
+        # Split documents
+        all_splits = split_documents(all_documents, CHUNK_SIZE, CHUNK_OVERLAP)
+
+        # Prepare corpus for BM25
+        corpus_texts = [doc.page_content for doc in all_splits]
+
+        # Create BM25 encoder
+        bm25_encoder = create_and_save_bm25_encoder(corpus_texts, BM25_ENCODER_PATH)
+
+
+        # Create retriever
+        retriever = PineconeHybridSearchRetriever(
+            embeddings=embedding_model, 
+            sparse_encoder=bm25_encoder, 
+            index=index
+        )
+
+        # Upload to Pinecone
+        upload_to_pinecone(retriever, all_splits)
+
+        # Verify upload
+        verify_index_stats(index)
+
+        logger.info("✓ All operations completed successfully!")
+
+    except Exception as e:
+        logger.error(f"Fatal error in main execution: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise
+
+
+if __name__ == "__main__":
+    main()
