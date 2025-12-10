@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import List, Dict, Tuple
 
 import pymupdf
-from dotenv import load_dotenv
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.retrievers import PineconeHybridSearchRetriever
@@ -15,24 +14,13 @@ from backend.connect_db import get_index
 from backend.utils import get_embedding_model
 
 # Configuration
-load_dotenv()
 DOCUMENTS_PATH = Path("data")
 METADATA_PATH = Path("data/metadata.jsonl")
 BM25_ENCODER_PATH = Path("backend/bm25_encoder.json")
 BATCH_SIZE = 100
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
-MIN_CHUNK_LENGTH = 10
 
-# # Setup logging
-# logging.basicConfig(
-#     level=logging.INFO,
-#     format='%(asctime)s - %(levelname)s - %(message)s',
-#     handlers=[
-#         logging.FileHandler('pdf_embedding.log'),
-#         logging.StreamHandler()
-#     ]
-# )
 logger = logging.getLogger(__name__)
 
 
@@ -192,12 +180,6 @@ def print_summary(total_files: int, errors: List[str], total_pages: int) -> None
     print(f"  Errors: {len(errors)}")
     print(f"  Total pages loaded: {total_pages}")
     print(f"{separator}\n")
-
-    if errors:
-        print("Errors encountered:")
-        for error in errors:
-            print(f"  - {error}")
-        print()
 
 
 def main():
