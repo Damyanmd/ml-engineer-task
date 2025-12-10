@@ -12,7 +12,6 @@ router = APIRouter()
 
 @router.post("/ask")
 async def ask_question(question: Question):
-    """Process question and return streaming answer"""
     try:
         async def stream_generator():
             answer = ""
