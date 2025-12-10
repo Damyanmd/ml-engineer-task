@@ -1,8 +1,7 @@
 from fastapi import HTTPException, APIRouter
-from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse
 import json
-
 
 from backend.generator import generate_chat
 from backend.schemas import Question
@@ -18,11 +17,10 @@ async def ask_question(question: Question):
             answer = ""
             async for chunk in generate_chat(question.question):
                 answer += chunk
-                # Send each chunk as SSE (Server-Sent Events)
                 yield f"data: {json.dumps({'chunk': chunk, 'done': False})}\n\n"
             
-            # Send final message with complete answer
-            yield f"data: {json.dumps({'answer': answer, 'done': True, 'sources': []})}\n\n"
+            # # Send final message with complete answer
+            # yield f"data: {json.dumps({'answer': answer, 'done': True, 'sources': []})}\n\n"
         
         return StreamingResponse(
             stream_generator(),
@@ -34,3 +32,7 @@ async def ask_question(question: Question):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@router.get("/")
+async def read_root():
+    return FileResponse(path="frontend/index.html", media_type="text/html")  

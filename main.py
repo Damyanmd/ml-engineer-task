@@ -1,7 +1,6 @@
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 
 from backend.router import router as api_router
 
@@ -18,11 +17,6 @@ app.add_middleware(
 
 app.include_router(api_router)
 
-@app.get("/")
-async def read_root():
-    return FileResponse(path="frontend/index.html", media_type="text/html")  
-
-#TODO: if possible to write automation tests
 if __name__ == "__main__":
     uvicorn.run(
         app,
