@@ -1,10 +1,10 @@
 import os
 from pinecone import Pinecone, ServerlessSpec
 
-from backend.utils.validate_key import validate_key
+from backend.utils import validate_key
 
 def get_index():
-    index_name = "isi-data-hybrid"
+    index_name = "isi-data-test"
 
     validate_key("PINECONE_API_KEY")
 
