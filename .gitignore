@@ -209,3 +209,6 @@ __marimo__/
 #docs
 domaindata
 data
+
+#bm25 encoder
+backend/bm25_encoder.json
