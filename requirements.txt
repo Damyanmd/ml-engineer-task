@@ -34,6 +34,7 @@ httpx-sse==0.4.3
 huggingface-hub==0.36.0
 idna==3.11
 importlib_metadata==8.7.0
+iniconfig==2.1.0
 Jinja2==3.1.6
 jiter==0.12.0
 joblib==1.5.2
@@ -65,6 +66,7 @@ pinecone-notebooks==0.0.2rc3
 pinecone-plugin-assistant==1.8.0
 pinecone-plugin-interface==0.0.7
 pinecone-text==0.11.0
+pluggy==1.6.0
 postgres==4.0
 propcache==0.4.1
 proto-plus==1.26.1
@@ -77,8 +79,10 @@ pyasn1_modules==0.4.2
 pydantic==2.12.5
 pydantic-settings==2.11.0
 pydantic_core==2.41.5
+Pygments==2.19.2
 PyMuPDF==1.26.5
 PyPDF2==3.0.1
+pytest==8.4.2
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
 PyYAML==6.0.3
@@ -98,6 +102,7 @@ sympy==1.14.0
 tenacity==9.1.2
 threadpoolctl==3.6.0
 tiktoken==0.12.0
+tomli==2.3.0
 torch==2.8.0
 tqdm==4.67.1
 types-requests==2.32.4.20250913
