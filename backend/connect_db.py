@@ -1,21 +1,21 @@
 import os
-
 from pinecone import Pinecone, ServerlessSpec
-from dotenv import load_dotenv
 
-load_dotenv()
+from backend.utils.validate_key import validate_key
 
-index_name = "isi-data-hybrid"
+def get_index():
+    index_name = "isi-data-hybrid"
 
-pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+    validate_key("PINECONE_API_KEY")
 
-if index_name not in pc.list_indexes().names():
-    pc.create_index(
-        name=index_name,
-        dimension=3072,  
-        metric="dotproduct",
-        spec=ServerlessSpec(cloud="aws", region="us-east-1"),
-    )
+    pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
 
+    if index_name not in pc.list_indexes().names():
+        pc.create_index(
+            name=index_name,
+            dimension=3072,  
+            metric="dotproduct",
+            spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+        )
 
-index = pc.Index(index_name)
+    return pc.Index(index_name)
