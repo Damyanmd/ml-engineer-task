@@ -1,227 +1,184 @@
-
 import pytest
-import asyncio
-from unittest.mock import Mock,AsyncMock
-from fastapi.testclient import TestClient
 import json
-from pydantic import BaseModel
+import sys
+from pathlib import Path
+from fastapi.testclient import TestClient
+from unittest.mock import patch
 
-# Assuming your app structure (adjust imports based on your actual structure)
-# from main import app, Question, generate_chat, ask_question
+# Add project root to Python path
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+from main import app
+
+client = TestClient(app)
 
 
-# ============================================================================
-# FIXTURES
-# ============================================================================
-
-@pytest.fixture
-def app():
-    """Create a test FastAPI app"""
-    from fastapi import FastAPI
-    from pydantic import BaseModel
-    from fastapi.responses import StreamingResponse
+class TestAskEndpoint:
     
-    app = FastAPI()
-    
-    class Question(BaseModel):
-        question: str
-    
-    async def generate_chat(question: str):
-        """Mock chat generation"""
-        response = f"Answer to: {question}"
-        for char in response:
-            yield char
-            await asyncio.sleep(0.001)
-    
-    @app.post("/ask")
-    async def ask_question(question: Question):
-        async def stream_generator():
-            async for chunk in generate_chat(question.question):
-                yield f"data: {json.dumps({'chunk': chunk, 'done': False})}\n\n"
-            yield f"data: {json.dumps({'done': True})}\n\n"
+    def test_ask_question_success(self):
+        """Test successful streaming response"""
+        # Mock the generate_chat function to yield chunks
+        async def mock_generate_chat(question):
+            chunks = ["Hello", " world", "!"]
+            for chunk in chunks:
+                yield chunk
         
-        return StreamingResponse(
-            stream_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-            }
+        # Patch generate_chat in the backend.router module where it's defined
+        with patch('backend.router.generate_chat', return_value=mock_generate_chat("test")):
+            response = client.post(
+                "/ask",
+                json={"question": "What is AI?"}
+            )
+            
+            assert response.status_code == 200
+            assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+            assert response.headers["cache-control"] == "no-cache"
+            assert response.headers["connection"] == "keep-alive"
+            
+            # Parse streamed response
+            content = response.text
+            lines = [line for line in content.split('\n') if line.startswith('data:')]
+            
+            assert len(lines) == 3
+            
+            # Verify chunks
+            for line in lines:
+                data = json.loads(line[6:])  # Remove 'data: ' prefix
+                assert 'chunk' in data
+                assert 'done' in data
+                assert data['done'] is False
+    
+    def test_ask_question_empty_stream(self):
+        """Test with empty response from generate_chat"""
+        async def mock_generate_chat(question):
+            return
+            yield  # Empty generator
+        
+        with patch('backend.router.generate_chat', return_value=mock_generate_chat("test")):
+            response = client.post(
+                "/ask",
+                json={"question": "test"}
+            )
+            
+            assert response.status_code == 200
+    
+    def test_ask_question_invalid_payload(self):
+        """Test with invalid request payload"""
+        response = client.post(
+            "/ask",
+            json={"invalid_field": "value"}
         )
+        
+        assert response.status_code == 422  # Validation error
     
-    return app
-
-
-@pytest.fixture
-def client(app):
-    """Create test client"""
-    return TestClient(app)
-
-
-@pytest.fixture
-def mock_llm():
-    """Mock LLM for testing"""
-    mock = AsyncMock()
-    mock.ainvoke.return_value = "This is a test response"
-    return mock
-
-
-@pytest.fixture
-def mock_vector_store():
-    """Mock vector store for testing"""
-    mock = Mock()
-    mock.similarity_search.return_value = [
-        Mock(page_content="Document 1 content", metadata={"source": "doc1.pdf"}),
-        Mock(page_content="Document 2 content", metadata={"source": "doc2.pdf"}),
-    ]
-    return mock
-
-
-# ============================================================================
-# UNIT TESTS - Models
-# ============================================================================
-
-class TestQuestionModel:
-    """Test the Question Pydantic model"""
+    def test_ask_question_missing_payload(self):
+        """Test with missing request body"""
+        response = client.post("/ask")
+        
+        assert response.status_code == 422
     
-    def test_valid_question(self):
-        """Test creating a valid Question model"""
-        class Question(BaseModel):
-            question: str
+    def test_ask_question_missing_question_field(self):
+        """Test with empty JSON body"""
+        response = client.post(
+            "/ask",
+            json={}
+        )
         
-        question = Question(question="What is AI?")
-        assert question.question == "What is AI?"
+        assert response.status_code == 422
     
-    def test_empty_question(self):
-        """Test that empty questions are handled"""
+    def test_ask_question_exception_handling(self):
+        """Test exception handling in generate_chat"""
+        async def mock_generate_chat_error(question):
+            raise ValueError("Something went wrong")
+            yield
         
-        class Question(BaseModel):
-            question: str
-        
-        # Empty string is technically valid, but you might want to add validation
-        question = Question(question="")
-        assert question.question == ""
+        with patch('backend.router.generate_chat', side_effect=lambda q: mock_generate_chat_error(q)):
+            # The test client will raise the exception since it occurs during streaming
+            with pytest.raises(ValueError, match="Something went wrong"):
+                response = client.post(
+                    "/ask",
+                    json={"question": "test"}
+                )
     
-    def test_question_with_special_chars(self):
-        """Test questions with special characters"""
-
-        class Question(BaseModel):
-            question: str
+    def test_ask_question_large_stream(self):
+        """Test with large number of chunks"""
+        async def mock_generate_chat(question):
+            for i in range(100):
+                yield f"chunk{i} "
         
-        question = Question(question="What is 2+2? Tell me!")
-        assert question.question == "What is 2+2? Tell me!"
-
-
-# ============================================================================
-# UNIT TESTS - Chat Generation
-# ============================================================================
-
-class TestChatGeneration:
-    """Test the chat generation logic"""
+        with patch('backend.router.generate_chat', return_value=mock_generate_chat("test")):
+            response = client.post(
+                "/ask",
+                json={"question": "Long question"}
+            )
+            
+            assert response.status_code == 200
+            lines = [line for line in response.text.split('\n') if line.startswith('data:')]
+            assert len(lines) == 100
     
-    @pytest.mark.asyncio
-    async def test_generate_chat_yields_chunks(self):
-        """Test that generate_chat yields text chunks"""
-        async def mock_generate_chat(question: str):
-            text = "Hello World"
-            for char in text:
-                yield char
+    def test_ask_question_special_characters(self):
+        """Test with special characters in response"""
+        async def mock_generate_chat(question):
+            yield '{"special": "chars"}'
+            yield "\n\t\r"
         
-        chunks = []
-        async for chunk in mock_generate_chat("test"):
-            chunks.append(chunk)
-        
-        assert "".join(chunks) == "Hello World"
-        assert len(chunks) == 11
+        with patch('backend.router.generate_chat', return_value=mock_generate_chat("test")):
+            response = client.post(
+                "/ask",
+                json={"question": "test"}
+            )
+            
+            assert response.status_code == 200
+            # Verify JSON is properly escaped
+            lines = [line for line in response.text.split('\n') if line.startswith('data:')]
+            for line in lines:
+                data = json.loads(line[6:])
+                assert isinstance(data['chunk'], str)
     
-    @pytest.mark.asyncio
-    async def test_generate_chat_with_empty_input(self):
-        """Test generate_chat with empty input"""
-        async def mock_generate_chat(question: str):
-            if not question:
-                yield "Please provide a question"
-        
-        chunks = []
-        async for chunk in mock_generate_chat(""):
-            chunks.append(chunk)
-        
-        assert len(chunks) > 0
     
-    @pytest.mark.asyncio
-    async def test_generate_chat_handles_long_text(self):
-        """Test that generate_chat handles long responses"""
-        async def mock_generate_chat(question: str):
-            text = "A" * 1000
-            for char in text:
-                yield char
+    def test_ask_question_single_chunk(self):
+        """Test with single chunk response"""
+        async def mock_generate_chat(question):
+            yield "Single response"
         
-        chunks = []
-        async for chunk in mock_generate_chat("test"):
-            chunks.append(chunk)
-        
-        assert len(chunks) == 1000
-
-
-# ============================================================================
-# UNIT TESTS - Agent Executor
-# ============================================================================
-
-class TestAgentExecutor:
-    """Test agent executor functionality"""
+        with patch('backend.router.generate_chat', return_value=mock_generate_chat("test")):
+            response = client.post(
+                "/ask",
+                json={"question": "simple question"}
+            )
+            
+            assert response.status_code == 200
+            lines = [line for line in response.text.split('\n') if line.startswith('data:')]
+            assert len(lines) == 1
+            data = json.loads(lines[0][6:])
+            assert data['chunk'] == "Single response"
+            assert data['done'] is False
     
-    @pytest.mark.asyncio
-    async def test_agent_executor_streaming(self):
-        """Test that agent executor streams responses"""
-        mock_executor = AsyncMock()
+    def test_ask_question_with_long_question(self):
+        """Test with a very long question"""
+        async def mock_generate_chat(question):
+            yield "Response to long question"
         
-        async def mock_astream_events(*args, **kwargs):
-            events = [
-                {"event": "on_chat_model_stream", "data": {"chunk": Mock(content="Hello")}},
-                {"event": "on_chat_model_stream", "data": {"chunk": Mock(content=" World")}},
-            ]
-            for event in events:
-                yield event
+        long_question = "What is " + "AI " * 100 + "?"
         
-        mock_executor.astream_events = mock_astream_events
-        
-        chunks = []
-        async for event in mock_executor.astream_events({}, version="v2"):
-            if event["event"] == "on_chat_model_stream":
-                chunks.append(event["data"]["chunk"].content)
-        
-        assert len(chunks) == 2
-        assert "".join(chunks) == "Hello World"
+        with patch('backend.router.generate_chat', return_value=mock_generate_chat("test")):
+            response = client.post(
+                "/ask",
+                json={"question": long_question}
+            )
+            
+            assert response.status_code == 200
     
-    @pytest.mark.asyncio
-    async def test_agent_executor_tool_usage(self):
-        """Test agent executor with tool calls"""
-        mock_executor = AsyncMock()
+    def test_ask_question_content_type(self):
+        """Test that response has correct content type"""
+        async def mock_generate_chat(question):
+            yield "test"
         
-        async def mock_astream_events(*args, **kwargs):
-            events = [
-                {"event": "on_tool_start", "name": "search_tool"},
-                {"event": "on_tool_end", "data": {"output": "Tool result"}},
-                {"event": "on_chat_model_stream", "data": {"chunk": Mock(content="Final answer")}},
-            ]
-            for event in events:
-                yield event
-        
-        mock_executor.astream_events = mock_astream_events
-        
-        events_received = []
-        async for event in mock_executor.astream_events({}, version="v2"):
-            events_received.append(event["event"])
-        
-        assert "on_tool_start" in events_received
-        assert "on_tool_end" in events_received
-        assert "on_chat_model_stream" in events_received
-
-
-
-
-# ============================================================================
-# RUN TESTS
-# ============================================================================
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--tb=short"])
+        with patch('backend.router.generate_chat', return_value=mock_generate_chat("test")):
+            response = client.post(
+                "/ask",
+                json={"question": "test"}
+            )
+            
+            assert "text/event-stream" in response.headers["content-type"]
