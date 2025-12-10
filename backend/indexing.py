@@ -14,12 +14,16 @@ from backend.connect_db import get_index
 from backend.utils import get_embedding_model
 
 # Configuration
+index = get_index()
+embedding_model = get_embedding_model()
+
 DOCUMENTS_PATH = Path("data")
 METADATA_PATH = Path("data/metadata.jsonl")
-BM25_ENCODER_PATH = Path("backend/bm25_encoder.json")
+BM25_ENCODER_PATH = "backend/bm25_encoder.json"
 BATCH_SIZE = 100
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
+MIN_CHUNK_LENGTH = 10
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +91,8 @@ def load_pdf_with_metadata(
 
 
 def load_all_pdfs(
-    folder_path: Path
+    folder_path: Path,
+    metadata_lookup: Dict[str, Dict]
 ) -> Tuple[List, List[str]]:
     """
     Load all PDFs from folder with metadata.
@@ -101,8 +106,6 @@ def load_all_pdfs(
 
     all_documents = []
     errors = []
-
-    metadata_lookup = load_metadata(METADATA_PATH)
 
     for pdf_file in pdf_files:
         documents, error = load_pdf_with_metadata(pdf_file, metadata_lookup)
@@ -131,6 +134,23 @@ def split_documents(documents: List, chunk_size: int, chunk_overlap: int) -> Lis
     logger.info(f"Created {len(splits)} text chunks")
     
     return splits
+
+
+def filter_valid_chunks(splits: List, min_length: int) -> List:
+    """Filter out empty or very short text chunks."""
+    logger.info("Filtering valid chunks...")
+    
+    valid_splits = [
+        doc for doc in splits 
+        if doc.page_content.strip() and len(doc.page_content.strip()) > min_length
+    ]
+    
+    logger.info(f"Valid chunks after filtering: {len(valid_splits)}")
+    
+    if len(valid_splits) == 0:
+        raise ValueError("No valid text chunks found after filtering!")
+    
+    return valid_splits
 
 
 def create_and_save_bm25_encoder(corpus_texts: List[str], save_path: str) -> BM25Encoder:
@@ -181,15 +201,14 @@ def print_summary(total_files: int, errors: List[str], total_pages: int) -> None
     print(f"  Total pages loaded: {total_pages}")
     print(f"{separator}\n")
 
-
 def main():
     """Main execution function."""
     try:
-        index = get_index()
-        embedding_model = get_embedding_model()
+        # Load metadata
+        metadata_lookup = load_metadata(METADATA_PATH)
 
         # Load PDFs
-        all_documents, errors = load_all_pdfs(DOCUMENTS_PATH)
+        all_documents, errors = load_all_pdfs(DOCUMENTS_PATH, metadata_lookup)
         
         # Print summary
         pdf_files = list(DOCUMENTS_PATH.glob("*.pdf"))
@@ -202,12 +221,14 @@ def main():
         # Split documents
         all_splits = split_documents(all_documents, CHUNK_SIZE, CHUNK_OVERLAP)
 
+        # Filter valid chunks
+        valid_splits = filter_valid_chunks(all_splits, MIN_CHUNK_LENGTH)
+
         # Prepare corpus for BM25
-        corpus_texts = [doc.page_content for doc in all_splits]
+        corpus_texts = [doc.page_content for doc in valid_splits]
 
         # Create BM25 encoder
         bm25_encoder = create_and_save_bm25_encoder(corpus_texts, BM25_ENCODER_PATH)
-
 
         # Create retriever
         retriever = PineconeHybridSearchRetriever(
@@ -217,7 +238,7 @@ def main():
         )
 
         # Upload to Pinecone
-        upload_to_pinecone(retriever, all_splits)
+        upload_to_pinecone(retriever, valid_splits)
 
         # Verify upload
         verify_index_stats(index)
